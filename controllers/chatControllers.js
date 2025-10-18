@@ -2,6 +2,7 @@ const Chat = require("../database/chat.js");
 const asyncHandler = require("express-async-handler");
 const User = require("../database/user.js");
 const mongoose = require("mongoose");
+const user = require("../database/user.js");
 
 exports.getMessage = asyncHandler(async (req, res) => {
     try{
@@ -113,4 +114,26 @@ exports.getContacts = asyncHandler(async (req, res) => {
         console.log(`Error fetching contacts: ${e}`);
         res.status(500).json({ message: "Server error" });
     }
+});
+
+
+exports.sellerInformation = asyncHandler(async (req, res) => {
+  try {
+    // fetch all users (sellers)
+    const users = await User.find();
+
+    // normalize into an array of objects
+    const sellers = users.map((u) => ({
+      id: u._id.toString(), // always string
+      name: u.name || u.username || "Unknown",
+    }));
+
+    console.log("THE SELLERS ARE", sellers);
+
+    // send as JSON
+    return res.status(200).json(sellers);
+  } catch (err) {
+    console.error("❌ Error fetching sellers:", err);
+    return res.status(500).json({ message: "Failed to fetch sellers" });
+  }
 });
