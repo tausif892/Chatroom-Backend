@@ -7,6 +7,8 @@ const WebSocket = require("ws");
 const mongoose = require("mongoose");
 const Chat = require("./database/chat.js");
 const User = require("./database/user.js");
+const { getRecommendations,postMessages } = require("./controllers/chatControllers.js");
+const { timeStamp } = require("console");
 
 const app = express();
 app.use(express.json());
@@ -22,7 +24,11 @@ const wss = new WebSocket.Server({ server });
 const JWT_SECRET_KEY = process.env.JWT_SECRET_KEY || "123/*+QWERTY";
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://mohammadtausif2005:1%40Pathanwadi@chat.s7blolj.mongodb.net/?retryWrites=true&w=majority&appName=chat";
 
-const clients = new Map(); // userId -> ws
+const clients = new Map();
+
+function sleep(ms){
+  return new Promise(resolve => setTimeout(resolve,ms));
+}
 
 function sendJSON(ws, obj) {
   if (ws && ws.readyState === WebSocket.OPEN) {
@@ -62,79 +68,105 @@ wss.on("connection", async (ws, req) => {
       if (data.type === "message") {
         const toId = String(data.to);
         const content = data.content?.trim();
-
+        const prevmessage = await Chat.find({
+            $or:[
+              {sender: userId, receiver: toId},
+              {sender: toId, receiver: userId}
+            ]
+          }).limit(1);
+          console.log(`PREVIOUS MESSAGE LENGTH IS : ${prevmessage.length}`);
         if (!toId || !content) {
           sendJSON(ws, { type: "error", message: "Receiver ID or content missing" });
           return;
         }
+        await postMessages(userId, toId , content);
 
         console.log(`💬 ${userId} → ${toId}: ${content}`);
-
-        // 1️⃣ Save chat message
-        const msg = await Chat.create({
-          sender: userId,
-          receiver: toId,
-          content,
-        });
-
-        // 2️⃣ Update contacts for both users
-        const [senderUser, receiverUser] = await Promise.all([
-          User.findById(userId),
-          User.findById(toId),
-        ]);
-
-        if (senderUser && receiverUser) {
-          const now = new Date();
-          const contactDataForSender = {
-            your_name: receiverUser.name,
-            last_reciever_name: receiverUser.name,
-            last_sender_name: senderUser.name,
-            last_sender: userId,
-            last_message: content,
-            last_time: now,
-          };
-
-          const contactDataForReceiver = {
-            your_name: senderUser.name,
-            last_reciever_name: receiverUser.name,
-            last_sender_name: senderUser.name,
-            last_sender: userId,
-            last_message: content,
-            last_time: now,
-          };
-
-          if (!senderUser.contacts) senderUser.contacts = new Map();
-          if (!receiverUser.contacts) receiverUser.contacts = new Map();
-
-          // ✅ Proper Map-based update
-          senderUser.contacts.set(toId, contactDataForSender);
-          receiverUser.contacts.set(userId, contactDataForReceiver);
-
-          await Promise.all([senderUser.save(), receiverUser.save()]);
-          console.log(`🟢 Contacts updated for both users`);
-        } else {
-          console.warn(`⚠️ One or both users not found in DB`);
-        }
-
-        // 3️⃣ Send message to receiver (if online)
-        const outgoing = {
+          let recommend;
+          let message;
+          let receiverWs;
+          
+          receiverWs = await clients.get(toId);
+                  const outgoing = {
           type: "message",
           message: {
-            id: msg._id,
             sender: userId,
             receiver: toId,
-            content,
-            timeStamp: msg.timeStamp,
+            content
           },
         };
+        console.log(`THE MESSAGE IS SENT TO THE SELLER NOW`);
 
-        const receiverWs = clients.get(toId);
+         receiverWs = await clients.get(toId);
         if (receiverWs && receiverWs.readyState === WebSocket.OPEN) {
           sendJSON(receiverWs, outgoing);
         }
-
-        // 4️⃣ Send back confirmation to sender
         sendJSON(ws, outgoing);
+
+          
+
+          if (prevmessage.length===0){
+            await sleep(2000);
+            console.log(`THIS IS THE FIRST MESSAGE BETWEEN THE TWO NOW!`);
+
+            const welcomeText =
+            "👋 **Welcome to Ind2b!**\n\n" +
+            "We’re glad to have you here. You can **chat directly with sellers** or **talk to our AI assistant** for quick help.\n\n" +
+            "To begin, click the **chat button on the left side of the search bar**.\n\n" +
+            "Thank you for choosing **Ind2b**!";
+
+             const welcomemessage = {
+              type: "message",
+              message: {
+                id: new mongoose.Types.ObjectId().toString(),
+                sender: toId,
+                receiver: userId,
+                content: welcomeText,
+                timeStamp: new Date().toISOString(),
+              }
+            };
+            sendJSON(ws, welcomemessage);
+            if (receiverWs && receiverWs.readyState == WebSocket.OPEN){
+              sendJSON(receiverWs,welcomemessage);
+            }
+            await postMessages(userId, toId, content);
+            await postMessages(toId, userId, welcomeText);
+            
+          }
+
+        if (content.includes("@AI") ||content.includes("@Ai") || content.includes("@aI") || content.includes("@ai")){
+
+          
+          const cleanContent = content.replace(/@ai/gi,"").trim();
+            
+          const seller = await User.findById(toId);
+          const buyer = true;
+          if (buyer){
+            recommend = await getRecommendations(content, seller.name);
+          }
+
+          const response = {
+            type: "message",
+            message: {
+              id: new mongoose.Types.ObjectId().toString(),
+              sender: toId,
+              receiver: userId,
+              content: recommend.answer,
+              timeStamp: new Date().toISOString()
+            }
+          }
+
+          sendJSON(ws, response);
+          if (receiverWs && receiverWs.readyState == WebSocket.OPEN){
+            sendJSON(receiverWs,response);
+          }
+          await postMessages(userId, toId, content);
+          await postMessages(toId, userId, recommend.answer);
+          return;
+        }
+
+        // 3️⃣ Send message to receiver (if online)
+        // 4️⃣ Send back confirmation to sender
 
       } else if (data.type === "ping") {
         sendJSON(ws, { type: "pong" });
@@ -160,7 +192,7 @@ wss.on("connection", async (ws, req) => {
 mongoose
   .connect(MONGO_URI)
   .then(() => {
-    const PORT = process.env.PORT || 5000;
+    const PORT = process.env.PORT || 10000;
     server.listen(PORT, () => {
       console.log(`🚀 Server listening on port ${PORT}`);
     });

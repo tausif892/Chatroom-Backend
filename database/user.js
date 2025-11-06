@@ -22,17 +22,20 @@ const userSchema = new mongoose.Schema({
     required: true,
     unique: true
   },
-  contacts: {
-    type: Map,
-    of:{
-      your_name: {type: String},
-      last_reciever_name: {type: String},
-      last_sender_name: {type: String},
-      last_sender: { type: String },           
-      last_message: { type: String },   
-      last_time: { type: Date }         
+  types: {
+    type: String,
+  },
+  contacts: 
+  [
+    {
+      id: {
+        type: String,
+      },
+      name: {
+        type: String,
+      }
     },
-  }
+  ]
 }, {
   timestamps: true
 });

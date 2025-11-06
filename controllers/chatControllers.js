@@ -3,6 +3,7 @@ const asyncHandler = require("express-async-handler");
 const User = require("../database/user.js");
 const mongoose = require("mongoose");
 const user = require("../database/user.js");
+const { urlencoded } = require("express");
 
 exports.getMessage = asyncHandler(async (req, res) => {
     try{
@@ -15,18 +16,17 @@ exports.getMessage = asyncHandler(async (req, res) => {
         const chat = await Chat.find({
             $or: [
                 {sender: sender, receiver: reciever},
-                {sender: reciever, receiver: sender}
+                {sender: reciever, receiver: sender},
             ]
-        }).sort({TimeStamp: 1});
-
-        res.status(200).json({chat});
+        }).sort({TimeStamp: 1})
+        console.log(`THE CHAT HISTORY BETWEEN THE TWO PARTIES IS THIS ${chat}`);
+        return res.status(200).json({chat});
     }catch(e){
         console.log(`The error is ${e}`);
     }
 });
 
-exports.postMessages = asyncHandler(async (req, res) => {
-  const { sender, receiver, content } = req.body;
+exports.postMessages =async function (sender, receiver, content) {
 
   if (!sender || !receiver || !content) {
     return res.status(400).json({ message: "All required fields must be provided" });
@@ -34,52 +34,53 @@ exports.postMessages = asyncHandler(async (req, res) => {
 
   try {
     // Save chat message
-    const message = await Chat.create({ sender: sender, receiver: receiver, content: content });
-
+    const message = await Chat.create({ sender, receiver, content });
     await message.save();
-
+    let senderExists;
+    let recieverExists;
     // Fetch users
     const [senderUser, receiverUser] = await Promise.all([
-      User.findOne({ _id: sender }),
-      User.findOne({ _id: receiver })
+      User.findById(sender),
+      User.findById(receiver)
     ]);
 
-    if (!senderUser || !receiverUser) {
-      return res.status(404).json({ message: "Sender or receiver not found" });
-    }
 
     const now = new Date();
+    try{
+    senderExists = senderUser.contacts.some(c => c.id ===String(receiver));
+    recieverExists = receiverUser.contacts.some(c=>c.id===String(sender));
+    }catch(e){
+      console.log(`ERROR FINDING THE CONTACTS IN SENDER AND RECIEVER ${e}`);
+    }
 
-    // Update sender's contacts
-    senderUser.contacts = senderUser.contacts ?? {};
-    senderUser.contacts[receiver.toString()] = {
-      your_name: receiverUser.name || "",
-      last_sender_name: senderUser.name || "",
-      last_sender: sender,
-      last_message: content,
-      last_time: now,
-    };
+    try{if (!senderExists){
+      senderUser.contacts.push(
+        {
+          "id": receiverUser.id,
+          "name": receiverUser.name
+        }
+      )
+    }
 
-    // Update receiver's contacts
-    receiverUser.contacts = senderUser.contacts ?? {};
-    receiverUser.contacts[sender.toString()] = {
-      my_name: receiverUser.name || "",
-      last_reciever_name: receiverUser.name || "",
-      last_sender_name: senderUser.name || "",
-      last_sender: sender,
-      last_message: content,
-      last_time: now,
-    };
+    if (!recieverExists){
+      receiverUser.contacts.push(
+        {
+          "id": senderUser.id,
+          "name": senderUser.name
+        }
+      )
+    }}catch(e){
+      console.log(`ERROR ADDING CONTACTS IN POSTMESSAGE ${e}`);
+    }
 
-    // Save both
+    // Save both users
     await Promise.all([senderUser.save(), receiverUser.save()]);
+    console.log(`ALL THE FUNCTIONS ARE COMPLETE`);
 
-    res.status(201).json({ message: "Message posted successfully", chatId: message._id });
   } catch (err) {
     console.error("Error posting message:", err);
-    res.status(500).json({ message: "Server error" });
   }
-});
+};
 
 exports.getContacts = asyncHandler(async (req, res) => {
     const { email_id } = req.body; 
@@ -98,16 +99,13 @@ exports.getContacts = asyncHandler(async (req, res) => {
         }
 
         const contactsArray = [];
-        for (const [contactId, contactData] of user.contacts) {
+        try{for (const c of user.contacts) {
             contactsArray.push({
-                your_name_name: contactData.get("your_name") || "",
-                last_reciever_name: contactData.get("last_reciever_name") || "",
-                last_sender_name: contactData.get("last_sender_name") || "",
-                last_sender: contactId || "",
-                last_message: contactData.get("last_message") || "",
-                last_time: contactData.get("last_time") || "",
-
+                id: c.id,
+                name: c.name
             });
+        }}catch(e){
+          console.log(`THERE WAS AN ERROR FETCHING CONTACT LOOP ${e}`);
         }
         res.status(200).json({ contacts: contactsArray });
     } catch (e) {
@@ -137,3 +135,30 @@ exports.sellerInformation = asyncHandler(async (req, res) => {
     return res.status(500).json({ message: "Failed to fetch sellers" });
   }
 });
+
+exports.getRecommendations = async function (query, seller) {
+  console.log(`IN CHAT CONTROLLER, THE QUERY IS ${query}`);
+
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:8000/query?q=${encodeURIComponent(query)}&seller=${encodeURIComponent(seller)}`
+    );
+
+    // ✅ Log non-OK responses instead of crashing
+    if (!response.ok) {
+      const text = await response.text();
+      console.error(`❌ Azure RAG API error: ${response.status} ${response.statusText}`);
+      console.error(`Response text: ${text}`);
+      throw new Error(`Azure API returned ${response.status}: ${text}`);
+    }
+
+    // ✅ Parse JSON safely
+    const data = await response.json();
+    return data;
+
+  } catch (err) {
+    console.error("❌ Error in getRecommendations:", err.message);
+    // Return a safe fallback instead of crashing your WebSocket handler
+    return { error: true, message: "AI service failed. Try again later." };
+  }
+};
