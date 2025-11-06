@@ -21,8 +21,8 @@ app.use("/chat", require("./routes/chatRoutes"));
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-const JWT_SECRET_KEY = process.env.JWT_SECRET_KEY || "123/*+QWERTY";
-const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://mohammadtausif2005:1%40Pathanwadi@chat.s7blolj.mongodb.net/?retryWrites=true&w=majority&appName=chat";
+const JWT_SECRET_KEY = process.env.JWT_SECRET_KEY;
+const MONGO_URI = process.env.MONGO_URI;
 
 const clients = new Map();
 
