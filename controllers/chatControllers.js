@@ -141,7 +141,7 @@ exports.getRecommendations = async function (query, seller) {
 
   try {
     const response = await fetch(
-      `http://127.0.0.1:8000/query?q=${encodeURIComponent(query)}&seller=${encodeURIComponent(seller)}`
+      `https://chatbot-rag-app.azurewebsites.net/query?q=${encodeURIComponent(query)}&seller=${encodeURIComponent(seller)}`
     );
 
     // ✅ Log non-OK responses instead of crashing
